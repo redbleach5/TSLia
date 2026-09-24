@@ -144,6 +144,8 @@ class LiyaRuntime:
         path = Path(tempfile.gettempdir()) / f"liya_{request_id}{suffix}"
         path.write_bytes(b"".join(chunks))
         try:
+            if not self.active_reply: return
+            await self.send(websocket, {"type": "partial_transcript", "text": "Проверяю, что вы сказали…", "request_id": request_id})
             text = await asyncio.to_thread(self.clients.transcribe, path)
             self.active_reply = f"reply-{request_id}"
             self.cancel_event = asyncio.Event()
