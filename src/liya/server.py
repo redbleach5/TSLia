@@ -44,6 +44,7 @@ class LiyaRuntime:
         self.pcm_chunks: dict[int, list[bytes]] = {}
         self.partial_tasks: dict[int, asyncio.Task] = {}
         self.partial_last_ms: dict[int, float] = {}
+        self.partial_calls: dict[int, int] = {}
         self.cancel_event: asyncio.Event | None = None
         self.active_reply: str | None = None
         self.active_task: asyncio.Task | None = None
@@ -142,11 +143,17 @@ class LiyaRuntime:
         task = self.partial_tasks.get(request_id)
         if task and not task.done(): return
         chunks = list(self.pcm_chunks.get(request_id, []))
+        settings = self.clients.settings if self.clients else None
         if not chunks or self.clients is None: return
+        if settings:
+            max_bytes = max(1, settings.stt_partial_window_seconds * 32000 * 2)
+            samples = b"".join(chunks)[-max_bytes:]
+        else:
+            samples = b"".join(chunks)
         path = Path(tempfile.gettempdir()) / f"liya_partial_{request_id}_{int(time.time()*1000)}.wav"
         try:
             import struct
-            samples = b"".join(chunks); count = len(samples) // 2
+            count = len(samples) // 2
             with wave.open(str(path), "wb") as output:
                 output.setnchannels(1); output.setsampwidth(2); output.setframerate(32000)
                 output.writeframes(struct.pack(f"<{count}h", *struct.unpack(f"<{count}h", samples)))
@@ -225,6 +232,7 @@ class LiyaRuntime:
             self.audio_chunks[request_id] = []
             self.pcm_chunks[request_id] = []
             self.partial_last_ms[request_id] = time.monotonic() * 1000
+            self.partial_calls[request_id] = 0
             await self.set_state(websocket, "listening")
         elif kind == "audio_chunk":
             request_id = int(event.get("request_id", 0))
@@ -233,8 +241,15 @@ class LiyaRuntime:
             request_id = int(event.get("request_id", 0))
             self.pcm_chunks.setdefault(request_id, []).append(base64.b64decode(event.get("data", "")))
             now = time.monotonic() * 1000
-            if now - self.partial_last_ms.get(request_id, now) >= 800:
+            settings = self.clients.settings if self.clients else None
+            interval = settings.stt_partial_interval_ms if settings else 800
+            minimum = settings.stt_partial_min_bytes if settings else 32000
+            maximum = settings.stt_partial_max_calls if settings else 6
+            total_bytes = sum(len(chunk) for chunk in self.pcm_chunks[request_id])
+            if (total_bytes >= minimum and self.partial_calls.get(request_id, 0) < maximum
+                    and now - self.partial_last_ms.get(request_id, now) >= interval):
                 self.partial_last_ms[request_id] = now
+                self.partial_calls[request_id] = self.partial_calls.get(request_id, 0) + 1
                 self.partial_tasks[request_id] = asyncio.create_task(self.emit_partial(websocket, request_id))
         elif kind == "finish_listening":
             partial = self.partial_tasks.get(int(event.get("request_id", 0)))
