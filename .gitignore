@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+config.json
+config.*.local.json
+models/
+output/
+data/
+.DS_Store

@@ -1,0 +1,10 @@
+{
+  "llm_url": "http://127.0.0.1:8080/v1/chat/completions",
+  "stt_url": "http://127.0.0.1:8081/v1/audio/transcriptions",
+  "tts_url": "http://127.0.0.1:8082/v1/audio/speech",
+  "model": "local-model",
+  "language": "ru",
+  "voice": "default",
+  "max_history_messages": 12,
+  "audio_output_path": "output/liya.wav"
+}
