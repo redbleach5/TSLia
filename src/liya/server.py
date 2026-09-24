@@ -150,9 +150,10 @@ class LiyaRuntime:
         elif not chunks or self.clients is None:
             await self.send(websocket, {"type": "error", "message": "РђСѓРґРёРѕР·Р°РїСЂРѕСЃ РїСѓСЃС‚ РёР»Рё STT РЅРµРґРѕСЃС‚СѓРїРµРЅ"})
             return
-        suffix = ".webm" if event.get("format") == "webm" else ".wav"
-        path = Path(tempfile.gettempdir()) / f"liya_{request_id}{suffix}"
-        path.write_bytes(b"".join(chunks))
+        else:
+            suffix = ".webm" if event.get("format") == "webm" else ".wav"
+            path = Path(tempfile.gettempdir()) / f"liya_{request_id}{suffix}"
+            path.write_bytes(b"".join(chunks))
         try:
             if not self.active_reply: return
             try:

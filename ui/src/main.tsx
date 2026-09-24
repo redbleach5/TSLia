@@ -11,6 +11,7 @@ const quick=['Р§С‚Рѕ С‚С‹ СѓРјРµРµС€СЊ?','Р Р°СЃ
 function App(){
  const recorder=useRef<MediaRecorder|null>(null);const stream=useRef<MediaStream|null>(null);const requestId=useRef(0);const audioRef=useRef<HTMLAudioElement>(null)
  const vadContext=useRef<AudioContext|null>(null);const vadAnalyser=useRef<AnalyserNode|null>(null);const vadFrame=useRef<number|null>(null);const vadStarted=useRef(false);const vadSilentMs=useRef(0);const vadLastMs=useRef(0)
+ const pcmNode=useRef<AudioWorkletNode|null>(null);const pcmSource=useRef<MediaStreamAudioSourceNode|null>(null)
   const audioContext=useRef<AudioContext|null>(null);const nextAudioAt=useRef(0)
  const [state,setState]=useState<State>('idle');const [input,setInput]=useState('');const [messages,setMessages]=useState<Message[]>([{id:'hi',role:'assistant',text:'РџСЂРёРІРµС‚. РЇ Р›РёСЏ. Р Р°РґР°, С‡С‚Рѕ С‚С‹ Р·РґРµСЃСЊ.',time:'СЃРµР№С‡Р°СЃ'}]);const [panel,setPanel]=useState(false);const [connected,setConnected]=useState(false);const socket=useRef(new LiyaSocket())
  const send=(event:unknown)=>{socket.current.connect();setTimeout(()=>socket.current.send(event),50)}
