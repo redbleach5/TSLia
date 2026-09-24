@@ -117,5 +117,31 @@ docs/              архитектура и инструкции
 5. Добавить память пользователя и RAG.
 6. Подключить MCP-инструменты с подтверждением опасных действий.
 7. Добавить нативный Swift-клиент и wake word.
+## Desktop UI (Tauri 2 + React + TypeScript)
+
+The desktop interface is in `ui/`. It is a separate frontend that connects to the Python runtime through WebSocket.
+
+```bash
+python -m pip install -e '.[ui]'
+python -m liya.ui_runtime
+```
+
+In another terminal:
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+The UI is available at `http://127.0.0.1:1420`. For a desktop build:
+
+```bash
+cd ui
+npm run build
+npx tauri dev
+```
+
+The UI currently supports a visual state machine, text chat, push-to-talk events, history rendering, runtime connection status, and a local LLM fallback when the model service is unavailable. Microphone capture and streamed TTS will be connected in the next voice-runtime iteration.
 
 См. [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -6,6 +6,8 @@ venv/
 config.json
 config.*.local.json
 models/
-output/
+ui/node_modules/
+ui/dist/
+ui/src-tauri/target/
 data/
 .DS_Store

@@ -1,0 +1,3 @@
+export type State = 'idle'|'listening'|'thinking'|'speaking'|'error'
+export type Message = {id:string; role:'user'|'assistant'; text:string; time:string}
+export type ServerEvent = {type:'state'; state:State} | {type:'transcript'; text:string; final?:boolean} | {type:'assistant_text'; text:string} | {type:'message'; role:'user'|'assistant'; text:string} | {type:'audio'; data:string; mime:string} | {type:'error'; message:string}
