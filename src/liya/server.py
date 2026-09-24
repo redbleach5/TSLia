@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
 import json
 import tempfile
 import time
@@ -52,6 +53,8 @@ class LiyaRuntime:
         self.last_tts_streamed = False
         self.tts_tasks: list[tuple[int, asyncio.Task]] = []
         self._tts_dispatcher: asyncio.Task | None = None
+        self.preemptive_texts: dict[int, list[str]] = {}
+        self.preemptive_tasks: dict[int, asyncio.Task] = {}
 
     async def send(self, websocket, event: dict) -> None:
         await websocket.send(json.dumps(event, ensure_ascii=False))
@@ -161,11 +164,19 @@ class LiyaRuntime:
             text, confidence = await asyncio.to_thread(self.clients.transcribe_with_confidence, path)
             threshold = settings.stt_partial_min_confidence if settings else 0.35
             if text.strip() and confidence >= threshold and self.partial_versions.get(request_id) == version:
+                self.preemptive_texts.setdefault(request_id, []).append(text.strip())
+                if request_id not in self.preemptive_tasks:
+                    self.preemptive_tasks[request_id] = asyncio.create_task(self.preemptive_reply(text.strip()))
                 await self.send(websocket, {"type": "partial_transcript", "text": text.strip(), "request_id": request_id, "final": False, "confidence": confidence})
         except (LocalServiceError, OSError): return
         finally: path.unlink(missing_ok=True)
 
-    async def process_audio(self, websocket, event: dict) -> None:
+    async def preemptive_reply(self, text: str) -> str:
+        if not self.clients: return ""
+        prompt = [{"role": "system", "content": "Ты — Лия. Подготовь краткий черновой ответ, не добавляй выдуманные факты."}, {"role": "user", "content": text}]
+        return await asyncio.to_thread(self.clients.chat, prompt)
+
+
         request_id = int(event.get("request_id", 0))
         self.active_reply = f"reply-{request_id}"
         self.cancel_event = asyncio.Event()
@@ -203,12 +214,24 @@ class LiyaRuntime:
             await self.set_state(websocket, "thinking")
             await self.send(websocket, {"type": "transcript", "text": text, "final": True})
             self.history.append({"role": "user", "content": text})
+            draft_task = self.preemptive_tasks.pop(request_id, None)
+            draft = ""
+            if draft_task and not draft_task.cancelled():
+                try: draft = await draft_task
+                except Exception: draft = ""
+            previous = self.preemptive_texts.pop(request_id, [])
+            similarity = difflib.SequenceMatcher(None, text.casefold(), previous[-1].casefold()).ratio() if previous else 0.0
             try:
-                messages = [{"role": "system", "content": "РўС‹ вЂ” Р›РёСЏ, Р»РѕРєР°Р»СЊРЅС‹Р№ РіРѕР»РѕСЃРѕРІРѕР№ РєРѕРјРїР°РЅСЊРѕРЅ. РћС‚РІРµС‡Р°Р№ С‚РµРїР»Рѕ, РєСЂР°С‚РєРѕ Рё РµСЃС‚РµСЃС‚РІРµРЅРЅРѕ."}] + self.history[-12:]
-                await self.set_state(websocket, "speaking")
-                reply = await self.stream_reply(websocket, messages, self.active_reply)
+                messages = [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
+                if draft and similarity >= 0.65:
+                    reply = draft
+                    await self.set_state(websocket, "speaking")
+                    await self.send(websocket, {"type": "assistant_text", "text": reply, "reply_id": self.active_reply})
+                else:
+                    await self.set_state(websocket, "speaking")
+                    reply = await self.stream_reply(websocket, messages, self.active_reply)
             except LocalServiceError:
-                reply = "РЇ СѓСЃР»С‹С€Р°Р»Р° С‚РµР±СЏ, РЅРѕ Р»РѕРєР°Р»СЊРЅС‹Р№ LLM СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ."
+                reply = "Локальный LLM сейчас недоступен."
             self.history.append({"role": "assistant", "content": reply})
             if self.cancel_event and self.cancel_event.is_set():
                 return
@@ -237,6 +260,7 @@ class LiyaRuntime:
             self.partial_last_ms[request_id] = time.monotonic() * 1000
             self.partial_calls[request_id] = 0
             self.partial_versions[request_id] = 0
+            self.preemptive_texts[request_id] = []
             await self.set_state(websocket, "listening")
         elif kind == "audio_chunk":
             request_id = int(event.get("request_id", 0))
