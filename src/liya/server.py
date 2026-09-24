@@ -40,6 +40,7 @@ class LiyaRuntime:
         self.state = "idle"
         self.history: list[dict[str, str]] = []
         self.audio_chunks: dict[int, list[bytes]] = {}
+        self.pcm_chunks: dict[int, list[bytes]] = {}
         self.cancel_event: asyncio.Event | None = None
         self.active_reply: str | None = None
         self.active_task: asyncio.Task | None = None
@@ -137,7 +138,16 @@ class LiyaRuntime:
     async def process_audio(self, websocket, event: dict) -> None:
         request_id = int(event.get("request_id", 0))
         chunks = self.audio_chunks.pop(request_id, [])
-        if not chunks or self.clients is None:
+        pcm_chunks = self.pcm_chunks.pop(request_id, [])
+        if pcm_chunks and not chunks and self.clients is not None:
+            import struct, wave
+            path = Path(tempfile.gettempdir()) / f"liya_{request_id}.wav"
+            samples = b"".join(pcm_chunks)
+            count = len(samples) // 2
+            with wave.open(str(path), "wb") as output:
+                output.setnchannels(1); output.setsampwidth(2); output.setframerate(32000)
+                output.writeframes(struct.pack(f"<{count}h", *struct.unpack(f"<{count}h", samples)))
+        elif not chunks or self.clients is None:
             await self.send(websocket, {"type": "error", "message": "РђСѓРґРёРѕР·Р°РїСЂРѕСЃ РїСѓСЃС‚ РёР»Рё STT РЅРµРґРѕСЃС‚СѓРїРµРЅ"})
             return
         suffix = ".webm" if event.get("format") == "webm" else ".wav"
@@ -190,10 +200,14 @@ class LiyaRuntime:
         if kind == "start_listening":
             request_id = int(event.get("request_id", 0))
             self.audio_chunks[request_id] = []
+            self.pcm_chunks[request_id] = []
             await self.set_state(websocket, "listening")
         elif kind == "audio_chunk":
             request_id = int(event.get("request_id", 0))
             self.audio_chunks.setdefault(request_id, []).append(base64.b64decode(event.get("data", "")))
+        elif kind == "audio_pcm_chunk":
+            request_id = int(event.get("request_id", 0))
+            self.pcm_chunks.setdefault(request_id, []).append(base64.b64decode(event.get("data", "")))
         elif kind == "finish_listening":
             self.active_task = asyncio.create_task(self.process_audio(websocket, event))
         elif kind == "text":
