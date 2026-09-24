@@ -222,59 +222,64 @@ class LiyaRuntime:
             suffix = ".webm" if event.get("format") == "webm" else ".wav"
             path = Path(tempfile.gettempdir()) / f"liya_{request_id}{suffix}"
             path.write_bytes(b"".join(chunks))
+        started = time.perf_counter()
+        stt_started = started
         try:
-            if not self.active_reply: return
+            events = await asyncio.to_thread(lambda: list(self.clients.transcribe_stream(path)))
+        except LocalServiceError:
+            events = []
+        stt_ms = int((time.perf_counter() - stt_started) * 1000)
+        if events:
+            for item in events:
+                await self.send(websocket, {"type": "partial_transcript", "text": item["text"], "request_id": request_id, "final": item["final"]})
+            text = str(events[-1]["text"])
+        else:
+            text = await asyncio.to_thread(self.clients.transcribe, path)
+        llm_started = time.perf_counter()
+        self.active_reply = f"reply-{request_id}"
+        self.cancel_event = asyncio.Event()
+        await self.set_state(websocket, "thinking")
+        await self.send(websocket, {"type": "transcript", "text": text, "final": True})
+        self.history.append({"role": "user", "content": text})
+        draft_task = self.preemptive_tasks.pop(request_id, None)
+        draft = ""
+        draft_audio = self.preemptive_audio.pop(request_id, [])
+        if draft_task and not draft_task.cancelled():
             try:
-                events = await asyncio.to_thread(lambda: list(self.clients.transcribe_stream(path)))
-            except LocalServiceError:
-                events = []
-            if events:
-                for item in events:
-                    await self.send(websocket, {"type": "partial_transcript", "text": item["text"], "request_id": request_id, "final": item["final"]})
-                text = str(events[-1]["text"])
+                draft, draft_audio = await draft_task
+            except Exception:
+                draft = ""
+        previous = self.preemptive_texts.pop(request_id, [])
+        similarity = difflib.SequenceMatcher(None, text.casefold(), previous[-1].casefold()).ratio() if previous else 0.0
+        preemptive_used = False
+        tts_started = time.perf_counter()
+        try:
+            messages = [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
+            if draft and similarity >= 0.65:
+                reply = draft
+                preemptive_used = True
+                await self.set_state(websocket, "speaking")
+                await self.send(websocket, {"type": "assistant_text", "text": reply, "reply_id": self.active_reply})
+                for index, audio in enumerate(draft_audio):
+                    await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply, "index": index})
             else:
-                text = await asyncio.to_thread(self.clients.transcribe, path)
-            self.active_reply = f"reply-{request_id}"
-            self.cancel_event = asyncio.Event()
-            await self.set_state(websocket, "thinking")
-            await self.send(websocket, {"type": "transcript", "text": text, "final": True})
-            self.history.append({"role": "user", "content": text})
-            draft_task = self.preemptive_tasks.pop(request_id, None)
-            draft = ""
-            draft_audio = self.preemptive_audio.pop(request_id, [])
-            if draft_task and not draft_task.cancelled():
-                try:
-                    draft, draft_audio = await draft_task
-                except Exception:
-                    draft = ""
-            previous = self.preemptive_texts.pop(request_id, [])
-            similarity = difflib.SequenceMatcher(None, text.casefold(), previous[-1].casefold()).ratio() if previous else 0.0
-            try:
-                messages = [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
-                if draft and similarity >= 0.65:
-                    reply = draft
-                    await self.set_state(websocket, "speaking")
-                    await self.send(websocket, {"type": "assistant_text", "text": reply, "reply_id": self.active_reply})
-                    for index, audio in enumerate(draft_audio):
-                        await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply, "index": index})
-                else:
-                    await self.set_state(websocket, "speaking")
-                    reply = await self.stream_reply(websocket, messages, self.active_reply)
-            except LocalServiceError:
-                reply = "Локальный LLM сейчас недоступен."
-            self.history.append({"role": "assistant", "content": reply})
-            if self.cancel_event and self.cancel_event.is_set():
-                return
-            if not self.last_tts_streamed:
-                output = path.with_name(f"liya_reply_{request_id}.wav")
-                audio = await asyncio.to_thread(self.clients.speak, reply, output)
-                await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio.read_bytes()).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply})
-            await self.set_state(websocket, "idle")
-        except (LocalServiceError, OSError) as exc:
-            await self.send(websocket, {"type": "error", "message": str(exc)})
-            await self.set_state(websocket, "error")
-        finally:
-            path.unlink(missing_ok=True)
+                await self.set_state(websocket, "speaking")
+                reply = await self.stream_reply(websocket, messages, self.active_reply)
+        except LocalServiceError:
+            reply = "Локальный LLM сейчас недоступен."
+        llm_ms = int((time.perf_counter() - llm_started) * 1000)
+        self.history.append({"role": "assistant", "content": reply})
+        if self.cancel_event and self.cancel_event.is_set():
+            return
+        tts_ms = int((time.perf_counter() - tts_started) * 1000)
+        if not self.last_tts_streamed:
+            output = path.with_name(f"liya_reply_{request_id}.wav")
+            audio = await asyncio.to_thread(self.clients.speak, reply, output)
+            await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio.read_bytes()).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply})
+        total_ms = int((time.perf_counter() - started) * 1000)
+        await self.send(websocket, {"type": "pipeline_metrics", "stt_ms": stt_ms, "llm_ms": llm_ms, "tts_ms": tts_ms, "total_ms": total_ms, "preemptive_used": preemptive_used})
+        await self.set_state(websocket, "idle")
+        path.unlink(missing_ok=True)
 
     async def handle(self, websocket, raw: str) -> None:
         try:
