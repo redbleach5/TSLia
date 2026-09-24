@@ -55,6 +55,7 @@ class LiyaRuntime:
         self._tts_dispatcher: asyncio.Task | None = None
         self.preemptive_texts: dict[int, list[str]] = {}
         self.preemptive_tasks: dict[int, asyncio.Task] = {}
+        self.preemptive_audio: dict[int, list[bytes]] = {}
 
     async def send(self, websocket, event: dict) -> None:
         await websocket.send(json.dumps(event, ensure_ascii=False))
@@ -166,15 +167,30 @@ class LiyaRuntime:
             if text.strip() and confidence >= threshold and self.partial_versions.get(request_id) == version:
                 self.preemptive_texts.setdefault(request_id, []).append(text.strip())
                 if request_id not in self.preemptive_tasks:
-                    self.preemptive_tasks[request_id] = asyncio.create_task(self.preemptive_reply(text.strip()))
+                    self.preemptive_tasks[request_id] = asyncio.create_task(self.preemptive_reply(text.strip(), request_id))
                 await self.send(websocket, {"type": "partial_transcript", "text": text.strip(), "request_id": request_id, "final": False, "confidence": confidence})
         except (LocalServiceError, OSError): return
         finally: path.unlink(missing_ok=True)
 
-    async def preemptive_reply(self, text: str) -> str:
+    async def preemptive_reply(self, text: str, request_id: int) -> tuple[str, list[bytes]]:
         if not self.clients: return ""
         prompt = [{"role": "system", "content": "Ты — Лия. Подготовь краткий черновой ответ, не добавляй выдуманные факты."}, {"role": "user", "content": text}]
-        return await asyncio.to_thread(self.clients.chat, prompt)
+        draft = await asyncio.to_thread(self.clients.chat, prompt)
+        chunks = []
+        sentences = []
+        buffer = SentenceBuffer()
+        for token in draft.split():
+            sentence = buffer.add(token)
+            if sentence: sentences.append(sentence)
+        if buffer.buffer.strip(): sentences.append(buffer.flush() or "")
+        for index, sentence in enumerate(sentences):
+            output = Path(tempfile.gettempdir()) / f"liya_preemptive_{request_id}_{index}.wav"
+            try:
+                audio_path = await asyncio.to_thread(self.clients.speak, sentence, output)
+                chunks.append(audio_path.read_bytes())
+            finally:
+                output.unlink(missing_ok=True)
+        return draft, chunks
 
 
     async def process_audio(self, websocket, event: dict) -> None:
@@ -217,9 +233,12 @@ class LiyaRuntime:
             self.history.append({"role": "user", "content": text})
             draft_task = self.preemptive_tasks.pop(request_id, None)
             draft = ""
+            draft_audio = self.preemptive_audio.pop(request_id, [])
             if draft_task and not draft_task.cancelled():
-                try: draft = await draft_task
-                except Exception: draft = ""
+                try:
+                    draft, draft_audio = await draft_task
+                except Exception:
+                    draft = ""
             previous = self.preemptive_texts.pop(request_id, [])
             similarity = difflib.SequenceMatcher(None, text.casefold(), previous[-1].casefold()).ratio() if previous else 0.0
             try:
@@ -228,6 +247,8 @@ class LiyaRuntime:
                     reply = draft
                     await self.set_state(websocket, "speaking")
                     await self.send(websocket, {"type": "assistant_text", "text": reply, "reply_id": self.active_reply})
+                    for index, audio in enumerate(draft_audio):
+                        await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply, "index": index})
                 else:
                     await self.set_state(websocket, "speaking")
                     reply = await self.stream_reply(websocket, messages, self.active_reply)
