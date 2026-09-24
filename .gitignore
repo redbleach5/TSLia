@@ -13,5 +13,6 @@ ui/node_modules/
 ui/dist/
 ui/src-tauri/target/
 ui/tsconfig.tsbuildinfo
+/Lia_v2.vrm
 data/
 .DS_Store
