@@ -5,6 +5,7 @@ import base64
 import json
 import tempfile
 import time
+import wave
 from pathlib import Path
 
 try:
@@ -41,6 +42,8 @@ class LiyaRuntime:
         self.history: list[dict[str, str]] = []
         self.audio_chunks: dict[int, list[bytes]] = {}
         self.pcm_chunks: dict[int, list[bytes]] = {}
+        self.partial_tasks: dict[int, asyncio.Task] = {}
+        self.partial_last_ms: dict[int, float] = {}
         self.cancel_event: asyncio.Event | None = None
         self.active_reply: str | None = None
         self.active_task: asyncio.Task | None = None
@@ -135,8 +138,27 @@ class LiyaRuntime:
         await self.send(websocket, {"type": "assistant_text", "text": reply, "reply_id": reply_id})
         return reply
 
+    async def emit_partial(self, websocket, request_id: int) -> None:
+        task = self.partial_tasks.get(request_id)
+        if task and not task.done(): return
+        chunks = list(self.pcm_chunks.get(request_id, []))
+        if not chunks or self.clients is None: return
+        path = Path(tempfile.gettempdir()) / f"liya_partial_{request_id}_{int(time.time()*1000)}.wav"
+        try:
+            import struct
+            samples = b"".join(chunks); count = len(samples) // 2
+            with wave.open(str(path), "wb") as output:
+                output.setnchannels(1); output.setsampwidth(2); output.setframerate(32000)
+                output.writeframes(struct.pack(f"<{count}h", *struct.unpack(f"<{count}h", samples)))
+            text = await asyncio.to_thread(self.clients.transcribe, path)
+            if text.strip(): await self.send(websocket, {"type": "partial_transcript", "text": text.strip(), "request_id": request_id, "final": False})
+        except (LocalServiceError, OSError): return
+        finally: path.unlink(missing_ok=True)
+
     async def process_audio(self, websocket, event: dict) -> None:
         request_id = int(event.get("request_id", 0))
+        self.active_reply = f"reply-{request_id}"
+        self.cancel_event = asyncio.Event()
         chunks = self.audio_chunks.pop(request_id, [])
         pcm_chunks = self.pcm_chunks.pop(request_id, [])
         if pcm_chunks and not chunks and self.clients is not None:
@@ -202,6 +224,7 @@ class LiyaRuntime:
             request_id = int(event.get("request_id", 0))
             self.audio_chunks[request_id] = []
             self.pcm_chunks[request_id] = []
+            self.partial_last_ms[request_id] = time.monotonic() * 1000
             await self.set_state(websocket, "listening")
         elif kind == "audio_chunk":
             request_id = int(event.get("request_id", 0))
@@ -209,7 +232,13 @@ class LiyaRuntime:
         elif kind == "audio_pcm_chunk":
             request_id = int(event.get("request_id", 0))
             self.pcm_chunks.setdefault(request_id, []).append(base64.b64decode(event.get("data", "")))
+            now = time.monotonic() * 1000
+            if now - self.partial_last_ms.get(request_id, now) >= 800:
+                self.partial_last_ms[request_id] = now
+                self.partial_tasks[request_id] = asyncio.create_task(self.emit_partial(websocket, request_id))
         elif kind == "finish_listening":
+            partial = self.partial_tasks.get(int(event.get("request_id", 0)))
+            if partial and not partial.done(): partial.cancel()
             self.active_task = asyncio.create_task(self.process_audio(websocket, event))
         elif kind == "text":
             self.active_task = asyncio.create_task(self.process_text(websocket, event))
