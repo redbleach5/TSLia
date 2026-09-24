@@ -177,6 +177,7 @@ class LiyaRuntime:
         return await asyncio.to_thread(self.clients.chat, prompt)
 
 
+    async def process_audio(self, websocket, event: dict) -> None:
         request_id = int(event.get("request_id", 0))
         self.active_reply = f"reply-{request_id}"
         self.cancel_event = asyncio.Event()
