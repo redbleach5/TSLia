@@ -4,7 +4,7 @@ import mimetypes
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from .config import Settings
 
 class LocalServiceError(RuntimeError): pass
@@ -19,6 +19,22 @@ class LocalClients:
             with urllib.request.urlopen(request, timeout=120) as response: data = json.loads(response.read())
             return data["choices"][0]["message"]["content"].strip()
         except (urllib.error.URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError) as exc: raise LocalServiceError(f"LLM недоступен: {self.settings.llm_url}") from exc
+
+    def chat_stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        payload = {"model": self.settings.model, "messages": messages, "temperature": 0.7, "stream": True}
+        request = urllib.request.Request(self.settings.llm_url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Accept": "text/event-stream"})
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8").strip()
+                    if not line.startswith("data:"): continue
+                    data = line[5:].strip()
+                    if data == "[DONE]": break
+                    event = json.loads(data)
+                    delta = event.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta: yield delta
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise LocalServiceError(f"LLM stream недоступен: {self.settings.llm_url}") from exc
 
     def transcribe(self, audio_path: str | Path) -> str:
         path = Path(audio_path); boundary = "----LiyaBoundary7MA4YWxkTrZu0gW"; audio = path.read_bytes()

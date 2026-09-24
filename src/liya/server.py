@@ -33,21 +33,32 @@ class LiyaRuntime:
         self.state = state
         await self.send(websocket, {"type": "state", "state": state})
 
-    async def stream_reply(self, websocket, reply: str, reply_id: str) -> None:
-        if not reply: return
-        words = reply.split(" ")
-        accumulated = ""
-        for word in words:
+    async def stream_reply(self, websocket, messages: list[dict[str, str]], reply_id: str) -> str:
+        reply = ""
+        if not self.clients:
+            await self.send(websocket, {"type": "assistant_text", "text": "Локальный LLM сейчас недоступен.", "reply_id": reply_id})
+            return "Локальный LLM сейчас недоступен."
+        queue: asyncio.Queue[str | None | BaseException] = asyncio.Queue()
+        def worker() -> None:
+            try:
+                for delta in self.clients.chat_stream(messages): queue.put_nowait(delta)
+            except BaseException as exc: queue.put_nowait(exc)
+            queue.put_nowait(None)
+        asyncio.create_task(asyncio.to_thread(worker))
+        while True:
+            item = await queue.get()
+            if item is None: break
+            if isinstance(item, BaseException):
+                reply = self.clients.chat(messages)
+                await self.send(websocket, {"type": "assistant_chunk", "text": reply, "reply_id": reply_id})
+                break
             if self.cancel_event and self.cancel_event.is_set():
                 await self.send(websocket, {"type": "cancelled", "reply_id": reply_id})
-                return
-            accumulated += (" " if accumulated else "") + word
-            await self.send(websocket, {"type": "assistant_chunk", "text": accumulated, "reply_id": reply_id})
-            await asyncio.sleep(0.035)
+                return reply
+            reply += item
+            await self.send(websocket, {"type": "assistant_chunk", "text": reply, "reply_id": reply_id})
         await self.send(websocket, {"type": "assistant_text", "text": reply, "reply_id": reply_id})
-        self.cancel_event = None
-        self.active_reply = None
-        await self.set_state(websocket, "idle")
+        return reply
 
     async def process_audio(self, websocket, event: dict) -> None:
         request_id = int(event.get("request_id", 0))
@@ -67,21 +78,17 @@ class LiyaRuntime:
             self.history.append({"role": "user", "content": text})
             try:
                 messages = [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
-                reply = await asyncio.to_thread(self.clients.chat, messages)
+                await self.set_state(websocket, "speaking")
+                reply = await self.stream_reply(websocket, messages, self.active_reply)
             except LocalServiceError:
                 reply = "Я услышала тебя, но локальный LLM сейчас недоступен."
             self.history.append({"role": "assistant", "content": reply})
-            self.active_reply = f"reply-{request_id}"
-            self.cancel_event = asyncio.Event()
-            await self.set_state(websocket, "speaking")
-            await self.stream_reply(websocket, reply, self.active_reply)
             if self.cancel_event and self.cancel_event.is_set():
-                await self.set_state(websocket, "idle")
-            else:
-                output = path.with_name(f"liya_reply_{request_id}.wav")
-                audio = await asyncio.to_thread(self.clients.speak, reply, output)
-                await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio.read_bytes()).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply})
-                await self.set_state(websocket, "idle")
+                return
+            output = path.with_name(f"liya_reply_{request_id}.wav")
+            audio = await asyncio.to_thread(self.clients.speak, reply, output)
+            await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio.read_bytes()).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply})
+            await self.set_state(websocket, "idle")
         except (LocalServiceError, OSError) as exc:
             await self.send(websocket, {"type": "error", "message": str(exc)})
             await self.set_state(websocket, "error")
@@ -103,11 +110,12 @@ class LiyaRuntime:
             request_id = int(event.get("request_id", 0))
             self.audio_chunks.setdefault(request_id, []).append(base64.b64decode(event.get("data", "")))
         elif kind == "finish_listening":
-            await self.process_audio(websocket, event)
+            self.active_task = asyncio.create_task(self.process_audio(websocket, event))
         elif kind == "text":
-            await self.process_text(websocket, event)
+            self.active_task = asyncio.create_task(self.process_text(websocket, event))
         elif kind == "cancel":
             if self.cancel_event: self.cancel_event.set()
+            if self.active_task and not self.active_task.done(): self.active_task.cancel()
             if self.active_reply: await self.send(websocket, {"type": "cancelled", "reply_id": self.active_reply})
             await self.set_state(websocket, "idle")
         elif kind == "ping":
@@ -125,12 +133,12 @@ class LiyaRuntime:
         try:
             if self.clients is None:
                 raise LocalServiceError("LLM client is not configured")
-            reply = self.clients.chat([{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:])
+            messages = [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
+            await self.set_state(websocket, "speaking")
+            reply = await self.stream_reply(websocket, messages, self.active_reply or "reply")
         except LocalServiceError:
             reply = "Я получила сообщение, но локальный LLM сейчас недоступен."
         self.history.append({"role": "assistant", "content": reply})
-        await self.set_state(websocket, "speaking")
-        await self.stream_reply(websocket, reply, self.active_reply or "reply")
 
 
 async def run(host: str = "127.0.0.1", port: int = 8765) -> None:
