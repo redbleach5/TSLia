@@ -6,8 +6,12 @@ venv/
 config.json
 config.*.local.json
 models/
+!ui/public/
+!ui/public/models/
+!ui/public/models/*.vrm
 ui/node_modules/
 ui/dist/
 ui/src-tauri/target/
+ui/tsconfig.tsbuildinfo
 data/
 .DS_Store

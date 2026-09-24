@@ -1,0 +1,18 @@
+import {useEffect,useRef,useState} from 'react'
+import * as THREE from 'three'
+import {VRMLoaderPlugin} from '@pixiv/three-vrm'
+import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js'
+import type {State} from './types'
+
+type Props={state:State}
+export function LiaAvatar({state}:Props){
+ const host=useRef<HTMLDivElement>(null);const [ready,setReady]=useState(false);const [error,setError]=useState(false);const vrmRef=useRef<any>(null);const stateRef=useRef(state)
+ useEffect(()=>{stateRef.current=state;const manager=vrmRef.current?.expressionManager;if(!manager)return;const set=(n:string,v=1)=>manager.setValue(n,v);set('happy',state==='speaking'?1:.15);set('relaxed',state==='idle'?1:.2);set('surprised',state==='listening'?.55:0);set('thinking',state==='thinking'?1:0)},[state])
+ useEffect(()=>{if(!host.current)return;let disposed=false;let frame=0;const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(30,1,.1,100);camera.position.set(0,1.35,3.5);const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;host.current.appendChild(renderer.domElement)
+ const ambient=new THREE.HemisphereLight(0xf5d6ff,0x171020,2.4);scene.add(ambient);const key=new THREE.DirectionalLight(0xffe7ee,3.2);key.position.set(2,4,3);scene.add(key);const rim=new THREE.DirectionalLight(0x9b7cff,3.5);rim.position.set(-3,2,-2);scene.add(rim)
+ const loader=new GLTFLoader();loader.register((parser)=>new VRMLoaderPlugin(parser));loader.loadAsync('/models/Lia_v2.vrm').then(gltf=>{const vrm=gltf.userData.vrm;vrmRef.current=vrm;if(!disposed){scene.add(vrm.scene);vrm.scene.rotation.y=Math.PI;setReady(true)}}).catch(()=>{if(!disposed)setError(true)})
+ const resize=()=>{if(!host.current)return;const {clientWidth:w,clientHeight:h}=host.current;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h)};resize();const ro=new ResizeObserver(resize);ro.observe(host.current)
+ const clock=new THREE.Clock();const animate=()=>{const t=clock.getElapsedTime();const v=vrmRef.current;if(v){const s=stateRef.current;v.scene.position.y=-.82+Math.sin(t*1.35)*.018;v.scene.rotation.y=Math.PI+Math.sin(t*.28)*.07;v.scene.rotation.z=Math.sin(t*.42)*.008;const em=v.expressionManager;em?.setValue('blink',t%4.4<.12?1:0);if(s==='speaking')em?.setValue('aa',.32+Math.sin(t*12)*.12);if(s==='listening')v.scene.position.y+=.015*Math.sin(t*3)}renderer.render(scene,camera);frame=requestAnimationFrame(animate)};animate()
+ return()=>{disposed=true;cancelAnimationFrame(frame);ro.disconnect();vrmRef.current?.scene?.removeFromParent();renderer.dispose();renderer.domElement.remove()}},[])
+ return <div className="vrm-viewport" ref={host}>{!ready&&!error&&<div className="avatar-loading"><div className="loading-orb"/><span>Лия пробуждается…</span></div>}{error&&<div className="avatar-error">Не удалось загрузить Lia_v2.vrm</div>}<div className={`vrm-fallback ${ready?'hidden':''}`}><div className="simple-hair"/><div className="simple-face"><i/><i/><b/></div><div className="simple-body"/></div></div>
+}
