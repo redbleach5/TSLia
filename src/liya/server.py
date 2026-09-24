@@ -145,8 +145,16 @@ class LiyaRuntime:
         path.write_bytes(b"".join(chunks))
         try:
             if not self.active_reply: return
-            await self.send(websocket, {"type": "partial_transcript", "text": "Проверяю, что вы сказали…", "request_id": request_id})
-            text = await asyncio.to_thread(self.clients.transcribe, path)
+            try:
+                events = await asyncio.to_thread(lambda: list(self.clients.transcribe_stream(path)))
+            except LocalServiceError:
+                events = []
+            if events:
+                for item in events:
+                    await self.send(websocket, {"type": "partial_transcript", "text": item["text"], "request_id": request_id, "final": item["final"]})
+                text = str(events[-1]["text"])
+            else:
+                text = await asyncio.to_thread(self.clients.transcribe, path)
             self.active_reply = f"reply-{request_id}"
             self.cancel_event = asyncio.Event()
             await self.set_state(websocket, "thinking")
