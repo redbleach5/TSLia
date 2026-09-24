@@ -190,6 +190,8 @@ class LiyaRuntime:
             self.active_task = asyncio.create_task(self.process_text(websocket, event))
         elif kind == "cancel":
             if self.cancel_event: self.cancel_event.set()
+            for _, task in list(self.tts_tasks):
+                if not task.done(): task.cancel()
             if self.active_task and not self.active_task.done(): self.active_task.cancel()
             if self.active_reply: await self.send(websocket, {"type": "cancelled", "reply_id": self.active_reply})
             await self.set_state(websocket, "idle")
