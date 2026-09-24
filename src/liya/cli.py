@@ -1,6 +1,8 @@
 from __future__ import annotations
 import argparse
 import sys
+import time
+from .audio import NoAudio, energy_vad, write_wav
 from pathlib import Path
 from .clients import LocalClients, LocalServiceError
 from .config import Settings
@@ -12,6 +14,8 @@ def build_parser():
     sub.add_parser("doctor"); sub.add_parser("chat")
     ask = sub.add_parser("ask"); ask.add_argument("text")
     say = sub.add_parser("say-file"); say.add_argument("audio")
+    record = sub.add_parser("record", help="записать WAV с микрофона")
+    record.add_argument("output", nargs="?", default="data/recording.wav")
     return parser
 def main():
     args = build_parser().parse_args()
@@ -26,6 +30,17 @@ def main():
     def answer(text):
         reply = clients.chat([{"role":"system", "content":SYSTEM_PROMPT}, {"role":"user", "content":text}])
         store.add("user", text); store.add("assistant", reply); return reply
+    if args.command == "record":
+        try:
+            import sounddevice as sd
+            print("Говорите. Для завершения нажмите Enter.")
+            with sd.InputStream(samplerate=32000, channels=1, dtype="int16") as stream:
+                input("Нажмите Enter, когда закончите: ")
+                frames = energy_vad(lambda n: stream.read(n // 2)[0].tobytes(), end=30.0)
+            print(f"WAV: {write_wav(args.output, frames)}")
+            return 0
+        except (ImportError, OSError, RuntimeError) as exc:
+            print(f"Микрофон недоступен: {exc}", file=sys.stderr); return 1
     if args.command == "ask":
         try: print(answer(args.text)); return 0
         except LocalServiceError as exc: print(str(exc), file=sys.stderr); return 1

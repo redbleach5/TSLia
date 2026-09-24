@@ -15,6 +15,10 @@
 - профиль личности Лии;
 - история диалога в `data/conversation.jsonl`;
 - отдельные профили macOS/MLX и WSL/llama.cpp.
+- запись микрофона в WAV командой `liya record` (опционально требуется `sounddevice`);
+- энергетический VAD-lite с завершением после тишины;
+- очередь голосовых заданий и отмена ответа через `VoicePipeline`;
+- unit-тесты аудио и voice pipeline;
 
 ## Требования
 
@@ -84,6 +88,8 @@ liya chat                           # интерактивный текстов�
 liya ask "Привет, Лия"              # один запрос
 liya say-file recording.wav         # WAV → STT → LLM → TTS
 ```
+liya record data/recording.wav          # запись микрофона в WAV
+liya say-file path/to/recording.wav      # WAV → STT → LLM → TTS
 
 ## Проверки
 
