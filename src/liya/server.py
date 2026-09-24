@@ -166,7 +166,9 @@ class LiyaRuntime:
             threshold = settings.stt_partial_min_confidence if settings else 0.35
             if text.strip() and confidence >= threshold and self.partial_versions.get(request_id) == version:
                 self.preemptive_texts.setdefault(request_id, []).append(text.strip())
-                if request_id not in self.preemptive_tasks:
+                if request_id not in self.preemptive_tasks or self.preemptive_tasks[request_id].done():
+                    old = self.preemptive_tasks.get(request_id)
+                    if old and not old.done(): old.cancel()
                     self.preemptive_tasks[request_id] = asyncio.create_task(self.preemptive_reply(text.strip(), request_id))
                 await self.send(websocket, {"type": "partial_transcript", "text": text.strip(), "request_id": request_id, "final": False, "confidence": confidence})
         except (LocalServiceError, OSError): return
@@ -176,13 +178,19 @@ class LiyaRuntime:
         if not self.clients: return ""
         prompt = [{"role": "system", "content": "Ты — Лия. Подготовь краткий черновой ответ, не добавляй выдуманные факты."}, {"role": "user", "content": text}]
         draft = await asyncio.to_thread(self.clients.chat, prompt)
+        settings = self.clients.settings
+        if len(text.strip()) < settings.preemptive_min_chars:
+            return draft, []
         chunks = []
         sentences = []
+        minimum = settings.preemptive_min_chars if settings else 12
+        maximum = settings.preemptive_max_sentences if settings else 4
         buffer = SentenceBuffer()
         for token in draft.split():
             sentence = buffer.add(token)
             if sentence: sentences.append(sentence)
         if buffer.buffer.strip(): sentences.append(buffer.flush() or "")
+        sentences = sentences[:settings.preemptive_max_sentences]
         for index, sentence in enumerate(sentences):
             output = Path(tempfile.gettempdir()) / f"liya_preemptive_{request_id}_{index}.wav"
             try:

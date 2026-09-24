@@ -13,7 +13,7 @@ def test_preemptive_draft_is_available():
     async def run():
         settings=Settings('l','s','t','m','ru','v',2,'o.wav')
         runtime=LiyaRuntime(FakeClients(settings))
-        result, audio = await runtime.preemptive_reply('проверка', 1)
+        result, audio = await runtime.preemptive_reply('проверка длинного черновика', 1)
         assert result == 'черновик.'
         assert len(audio) == 1
     asyncio.run(run())
