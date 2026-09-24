@@ -3,6 +3,7 @@ import json
 import mimetypes
 import urllib.error
 import urllib.request
+import tempfile
 from pathlib import Path
 from typing import Any, Iterator
 from .config import Settings
@@ -53,3 +54,12 @@ class LocalClients:
             with urllib.request.urlopen(request, timeout=120) as response: path.write_bytes(response.read())
         except (urllib.error.URLError, TimeoutError) as exc: raise LocalServiceError(f"TTS недоступен: {self.settings.tts_url}") from exc
         return path
+
+    def speak_stream(self, text: str) -> Iterator[bytes]:
+        payload = {"model": self.settings.voice, "input": text, "voice": self.settings.voice, "stream": True}
+        request = urllib.request.Request(self.settings.tts_url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Accept": "audio/wav"})
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response: yield from iter(lambda: response.read(8192), b"")
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise LocalServiceError(f"TTS stream недоступен: {self.settings.tts_url}") from exc
+

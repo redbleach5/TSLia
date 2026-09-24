@@ -44,6 +44,8 @@ class LiyaRuntime:
         self.active_reply: str | None = None
         self.active_task: asyncio.Task | None = None
         self.last_tts_streamed = False
+        self.tts_tasks: list[tuple[int, asyncio.Task]] = []
+        self._tts_dispatcher: asyncio.Task | None = None
 
     async def send(self, websocket, event: dict) -> None:
         await websocket.send(json.dumps(event, ensure_ascii=False))
@@ -52,8 +54,41 @@ class LiyaRuntime:
         self.state = state
         await self.send(websocket, {"type": "state", "state": state})
 
+    async def dispatch_tts(self, websocket, reply_id: str, done: asyncio.Queue[tuple[int, asyncio.Task] | None]) -> None:
+        pending: dict[int, asyncio.Task] = {}
+        next_index = 0
+        while True:
+            item = await done.get()
+            if item is None:
+                if next_index in pending:
+                    result = await pending.pop(next_index)
+                    if result and not (self.cancel_event and self.cancel_event.is_set()):
+                        await self.send(websocket, {"type": "audio", "data": base64.b64encode(result[1]).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": reply_id, "index": next_index})
+                return
+            index, task = item
+            pending[index] = task
+            while next_index in pending:
+                result = await pending.pop(next_index)
+                if result and not (self.cancel_event and self.cancel_event.is_set()):
+                    await self.send(websocket, {"type": "audio", "data": base64.b64encode(result[1]).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": reply_id, "index": next_index})
+                next_index += 1
+
+    async def synthesize(self, sentence: str, reply_id: str, index: int) -> tuple[int, bytes]:
+        output = Path(tempfile.gettempdir()) / f"liya_{reply_id}_{index}.wav"
+        try:
+            audio = await asyncio.to_thread(self.clients.speak, sentence, output)
+            return index, audio.read_bytes()
+        finally:
+            output.unlink(missing_ok=True)
+
+
     async def stream_reply(self, websocket, messages: list[dict[str, str]], reply_id: str) -> str:
         self.last_tts_streamed = False
+        self._websocket = websocket
+        self.tts_tasks = []
+        self._tts_dispatcher = None
+        tts_done: asyncio.Queue[tuple[int, asyncio.Task] | None] = asyncio.Queue()
+        self._tts_dispatcher = asyncio.create_task(self.dispatch_tts(websocket, reply_id, tts_done))
         reply = ""
         sentence_buffer = SentenceBuffer()
         if not self.clients:
@@ -80,16 +115,22 @@ class LiyaRuntime:
             await self.send(websocket, {"type": "assistant_chunk", "text": reply, "reply_id": reply_id})
             sentence = sentence_buffer.add(item)
             if sentence and self.clients:
-                output = Path(tempfile.gettempdir()) / f"liya_{reply_id}_{len(reply)}.wav"
-                audio = await asyncio.to_thread(self.clients.speak, sentence, output)
-                await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio.read_bytes()).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": reply_id, "sentence": sentence})
+                index = len(self.tts_tasks)
+                task = asyncio.create_task(self.synthesize(sentence, reply_id, index))
+                self.tts_tasks.append((index, task))
+                task.add_done_callback(lambda _task, i=index: tts_done.put_nowait((i, _task)))
                 self.last_tts_streamed = True
         remaining = sentence_buffer.flush()
         if remaining and self.clients:
-            output = Path(tempfile.gettempdir()) / f"liya_{reply_id}_remaining.wav"
-            audio = await asyncio.to_thread(self.clients.speak, remaining, output)
-            await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio.read_bytes()).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": reply_id, "sentence": remaining})
+            index = len(self.tts_tasks)
+            task = asyncio.create_task(self.synthesize(remaining, reply_id, index))
+            self.tts_tasks.append((index, task))
+            task.add_done_callback(lambda _task, i=index: tts_done.put_nowait((i, _task)))
             self.last_tts_streamed = True
+        if self.tts_tasks:
+            await asyncio.gather(*(task for _, task in self.tts_tasks), return_exceptions=True)
+        await tts_done.put(None)
+        if self._tts_dispatcher: await self._tts_dispatcher
         await self.send(websocket, {"type": "assistant_text", "text": reply, "reply_id": reply_id})
         return reply
 
