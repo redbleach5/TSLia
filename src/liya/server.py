@@ -52,12 +52,32 @@ class LiyaRuntime:
         self.cancel_event: asyncio.Event | None = None
         self.active_reply: str | None = None
         self.active_task: asyncio.Task | None = None
+        self.active_turn_id: int | None = None
+        self.generation = 0
+        self.llm_tasks: list[asyncio.Task] = []
         self.last_tts_streamed = False
         self.tts_tasks: list[tuple[int, asyncio.Task]] = []
         self._tts_dispatcher: asyncio.Task | None = None
         self.preemptive_texts: dict[int, list[str]] = {}
         self.preemptive_tasks: dict[int, asyncio.Task] = {}
         self.preemptive_audio: dict[int, list[bytes]] = {}
+
+    def is_current(self, turn_id: int | None) -> bool:
+        return turn_id is not None and turn_id == self.active_turn_id and self.generation == turn_id
+
+    def begin_turn(self, request_id: int) -> int:
+        self.generation += 1
+        self.active_turn_id = self.generation
+        self.active_reply = f"reply-{request_id}-{self.generation}"
+        self.cancel_event = asyncio.Event()
+        return self.generation
+
+    def cancel_active(self) -> None:
+        if self.cancel_event: self.cancel_event.set()
+        for task in [*self.tts_tasks, *self.llm_tasks, *self.preemptive_tasks.values()]:
+            if not task.done(): task.cancel()
+        if self.active_task and not self.active_task.done(): self.active_task.cancel()
+        if self._tts_dispatcher and not self._tts_dispatcher.done(): self._tts_dispatcher.cancel()
 
     async def send(self, websocket, event: dict) -> None:
         await websocket.send(json.dumps(event, ensure_ascii=False))
@@ -94,7 +114,7 @@ class LiyaRuntime:
             output.unlink(missing_ok=True)
 
 
-    async def stream_reply(self, websocket, messages: list[dict[str, str]], reply_id: str) -> str:
+    async def stream_reply(self, websocket, messages: list[dict[str, str]], reply_id: str, turn_id: int) -> str:
         self.last_tts_streamed = False
         self._websocket = websocket
         self.tts_tasks = []
@@ -112,7 +132,8 @@ class LiyaRuntime:
                 for delta in self.clients.chat_stream(messages): queue.put_nowait(delta)
             except BaseException as exc: queue.put_nowait(exc)
             queue.put_nowait(None)
-        asyncio.create_task(asyncio.to_thread(worker))
+        llm_task = asyncio.create_task(asyncio.to_thread(worker))
+        self.llm_tasks.append(llm_task)
         while True:
             item = await queue.get()
             if item is None: break
@@ -120,7 +141,7 @@ class LiyaRuntime:
                 reply = self.clients.chat(messages)
                 await self.send(websocket, {"type": "assistant_chunk", "text": reply, "reply_id": reply_id})
                 break
-            if self.cancel_event and self.cancel_event.is_set():
+            if self.cancel_event and self.cancel_event.is_set() or not self.is_current(turn_id):
                 await self.send(websocket, {"type": "cancelled", "reply_id": reply_id})
                 return reply
             reply += item
@@ -205,7 +226,8 @@ class LiyaRuntime:
 
     async def process_audio(self, websocket, event: dict) -> None:
         request_id = int(event.get("request_id", 0))
-        self.active_reply = f"reply-{request_id}"
+        turn_id = self.begin_turn(request_id)
+        self.active_reply = f"reply-{request_id}-{turn_id}"
         self.cancel_event = asyncio.Event()
         chunks = self.audio_chunks.pop(request_id, [])
         pcm_chunks = self.pcm_chunks.pop(request_id, [])
@@ -238,8 +260,6 @@ class LiyaRuntime:
         else:
             text = await asyncio.to_thread(self.clients.transcribe, path)
         llm_started = time.perf_counter()
-        self.active_reply = f"reply-{request_id}"
-        self.cancel_event = asyncio.Event()
         await self.set_state(websocket, "thinking")
         await self.send(websocket, {"type": "transcript", "text": text, "final": True})
         self.history.append({"role": "user", "content": text})
@@ -269,7 +289,7 @@ class LiyaRuntime:
                     await self.send(websocket, {"type": "audio", "data": base64.b64encode(audio).decode(), "mime": "audio/wav", "sampleRate": 22050, "reply_id": self.active_reply, "index": index})
             else:
                 await self.set_state(websocket, "speaking")
-                reply = await self.stream_reply(websocket, messages, self.active_reply)
+                reply = await self.stream_reply(websocket, messages, self.active_reply, turn_id)
         except LocalServiceError:
             reply = "Р›РѕРєР°Р»СЊРЅС‹Р№ LLM СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ."
         llm_ms = int((time.perf_counter() - llm_started) * 1000)
@@ -327,10 +347,7 @@ class LiyaRuntime:
         elif kind == "text":
             self.active_task = asyncio.create_task(self.process_text(websocket, event))
         elif kind == "cancel":
-            if self.cancel_event: self.cancel_event.set()
-            for _, task in list(self.tts_tasks):
-                if not task.done(): task.cancel()
-            if self.active_task and not self.active_task.done(): self.active_task.cancel()
+            self.cancel_active()
             if self.active_reply: await self.send(websocket, {"type": "cancelled", "reply_id": self.active_reply})
             await self.set_state(websocket, "idle")
         elif kind == "memory_list":
@@ -345,8 +362,8 @@ class LiyaRuntime:
         text = str(event.get("text", "")).strip()
         if not text:
             return
-        self.active_reply = f"reply-{int(time.time_ns())}"
-        self.cancel_event = asyncio.Event()
+        turn_id = self.begin_turn(int(time.time_ns()))
+        self.active_reply = f"reply-{turn_id}"
         await self.set_state(websocket, "thinking")
         await self.send(websocket, {"type": "transcript", "text": text, "final": True})
         self.history.append({"role": "user", "content": text})
@@ -358,7 +375,7 @@ class LiyaRuntime:
                 raise LocalServiceError("LLM client is not configured")
             messages = memory_context + [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
             await self.set_state(websocket, "speaking")
-            reply = await self.stream_reply(websocket, messages, self.active_reply or "reply")
+            reply = await self.stream_reply(websocket, messages, self.active_reply or "reply", self.active_turn_id or 0)
         except LocalServiceError:
             reply = "Р Р‡ Р С—Р С•Р В»РЎС“РЎвЂЎР С‘Р В»Р В° РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р Вµ, Р Р…Р С• Р В»Р С•Р С”Р В°Р В»РЎРЉР Р…РЎвЂ№Р в„– LLM РЎРѓР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р…."
         self.history.append({"role": "assistant", "content": reply})
