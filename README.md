@@ -1,6 +1,6 @@
 # Лия (TSLia)
 
-Локальный голосовой ИИ-компаньон Лия. Основной пользовательский путь: микрофон → PCM → локальный STT → LLM → TTS → Web Audio → `Lia_v2.vrm`.
+Локальный голосовой ИИ-компаньон Лия. Основной пользовательский путь: микрофон → PCM → локальный STT → LLM → TTS → Web Audio → glTF-аватар.
 
 > **Статус:** рабочий вертикальный прототип, не production-ready ассистент. Точная карта возможностей и ограничений находится в [docs/STATUS.md](docs/STATUS.md), план — в [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,13 +10,15 @@
 - локальный batch STT endpoint с selectable backend-контрактом;
 - локальный batch TTS endpoint;
 - Tauri 2 + React + TypeScript desktop UI;
-- `Lia_v2.vrm` через Three.js и `@pixiv/three-vrm`;
+- 3D-аватар в формате glTF через Three.js `GLTFLoader`;
 - микрофонный PCM transport через `AudioWorklet` (mono PCM16, 32 kHz);
 - WebSocket runtime с turn/reply/generation guardrails;
 - SSE LLM, sentence buffer и ordered Web Audio playback;
 - базовая SQLite facts memory с просмотром и удалением;
 - capability policy, которая не объявляет batch STT/TTS настоящими streaming backend;
-- контракт `MacSpeechAnalyzerSTT` с fallback на `LocalHttpSTT`.
+- контракт `MacSpeechAnalyzerSTT` с fallback на `LocalHttpSTT`;
+- server-side endpointing по PCM с выбором VAD-backend: `energy` или Silero ONNX (`vad_backend`), с прозрачным fallback на energy при отсутствии модели или `onnxruntime`;
+- latency p50/p95 по фазам stt/llm/tts/total в событии `latency_stats` и бюджет отката `latency_p95_budget_ms`.
 
 ## Что ещё не готово
 
@@ -36,7 +38,7 @@ SSE LLM ≠ streaming TTS
 Web Audio queue ≠ streaming TTS synthesis
 ```
 
-Подробности: [docs/STATUS.md](docs/STATUS.md) и [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Подробности: [docs/STATUS.md](docs/STATUS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) и [docs/FACE.md](docs/FACE.md).
 
 ## Требования
 
@@ -44,8 +46,9 @@ Web Audio queue ≠ streaming TTS synthesis
 - Node.js для UI;
 - Rust toolchain для Tauri;
 - macOS/Xcode для нативного SpeechAnalyzer bridge;
+- Apple Silicon; **основной профиль — MacBook M1 Max с 64 ГБ unified memory**;
 - локальные LLM, STT и TTS services;
-- Apple Silicon и 64 ГБ unified memory для основного профиля.
+- Audio2Face-3D локально на этом Mac не поддерживается: для него нужен отдельный NVIDIA/CUDA-хост либо облачный NVCF.
 
 ## Быстрый запуск CLI
 
@@ -73,6 +76,8 @@ liya chat
 | TTS | `http://127.0.0.1:8082/v1/audio/speech` | batch WAV |
 
 Параметры `stt_backend` и capability описаны в [config.example.json](config.example.json).
+
+Для `vad_backend = "silero"` нужны `pip install onnxruntime` и файл модели `silero_vad.onnx` (репозиторий `snakers4/silero-vad`) по пути `vad_model_path`. Если модели или рантайма нет, endpointing не ломается: сессия остаётся на энергетическом пороге `vad_threshold`.
 
 ## Запуск desktop UI
 
@@ -130,8 +135,8 @@ cd src-tauri && cargo check
 ## Структура
 
 ```text
-src/liya/       Python runtime, CLI, clients, STT abstraction
-ui/src/         React UI, Three.js/VRM, AudioWorklet, Web Audio queue
+src/liya/       Python runtime, CLI, clients, STT/VAD abstraction, latency-метрики
+ui/src/         React UI, Three.js/glTF, AudioWorklet, Web Audio queue
 ui/src-tauri/   Tauri shell
 tests/          unit и protocol tests
 scripts/        WSL/llama.cpp helpers

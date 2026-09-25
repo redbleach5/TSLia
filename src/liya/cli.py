@@ -25,6 +25,20 @@ def main():
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr); return 2
     if args.command == "doctor":
         for name, url in (("LLM", settings.llm_url), ("STT", settings.stt_url), ("TTS", settings.tts_url)): print(f"{name}: {url} — настройте локальный сервис")
+        print(f"STT backend: {settings.stt_backend}, модель: {settings.stt_model}")
+        if settings.stt_backend in {"mlx_audio", "mlx-audio"}:
+            print("MLX-Audio: локальный Apple Silicon HTTP backend; проверьте доступность endpoint и загрузку модели")
+        print(f"TTS backend: {settings.tts_backend}, модель: {settings.tts_model}, reference: {settings.voice_reference_path or 'не задан'}")
+        backend = str(getattr(settings, "vad_backend", "energy") or "energy").lower()
+        if backend == "silero":
+            from .silero_vad import silero_unavailable_reason
+            reason = silero_unavailable_reason(settings.vad_model_path)
+            print(f"VAD: silero, модель {settings.vad_model_path}, порог {settings.vad_silero_threshold}" if reason is None
+                  else f"VAD: silero недоступен ({reason}) — используется energy, порог {settings.vad_threshold}")
+        else:
+            print(f"VAD: energy, порог {settings.vad_threshold}")
+        from .face import describe_face_backend
+        print(describe_face_backend(settings))
         return 0
     store = ConversationStore("data/conversation.jsonl")
     def answer(text):

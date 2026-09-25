@@ -1,6 +1,11 @@
 ﻿{
     "llm_url":  "http://127.0.0.1:8080/v1/chat/completions",
     "stt_backend": "local_http",
+    "stt_model": "whisper-large-v3-turbo",
+    "tts_backend": "local_http",
+    "tts_model": "kokoro",
+    "voice_reference_path": "",
+    "mlx_audio_url": "http://127.0.0.1:8000",
 
     "stt_url":  "http://127.0.0.1:8081/v1/audio/transcriptions",
     "tts_url":  "http://127.0.0.1:8082/v1/audio/speech",
@@ -13,10 +18,20 @@
     "vad_min_speech_ms":  300,
     "vad_min_silence_ms":  850,
     "vad_max_seconds":  30,
+    "vad_endpointing":  true,
+    "vad_backend":  "energy",
+    "vad_model_path":  "models/silero_vad.onnx",
+    "vad_silero_threshold":  0.5,
     "stt_partial_interval_ms":  800,
     "stt_partial_min_bytes":  32000,
     "stt_partial_window_seconds":  8,
     "stt_partial_max_calls":  6,
     "stt_partial_min_confidence":  0.35,
-    "request_timeout_seconds":  30
+    "request_timeout_seconds":  30,
+    "latency_window":  200,
+    "latency_p95_budget_ms":  4000,
+    "latency_min_samples":  5,
+    "face_backend":  "ui",
+    "a2f_url":  "127.0.0.1:52000",
+    "a2f_health_url":  "http://127.0.0.1:8000/v1/health/ready"
 }

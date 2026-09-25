@@ -9,7 +9,7 @@ Tauri + AudioWorklet
       ↓ PCM16, mono, 32 kHz
 WebSocket transport
       ↓
-TurnManager + VAD
+TurnManager + VAD (energy / Silero ONNX)
       ↓
 STT backend
   ├── LocalHttpSTT (batch)
@@ -29,7 +29,7 @@ TTS backend
       ↓
 ordered Web Audio playback
       ↓
-AnalyserNode + VRM lip sync
+AnalyserNode + glTF lip sync
 ```
 
 ## Что реализовано сейчас
@@ -43,8 +43,10 @@ AnalyserNode + VRM lip sync
 - LLM использует OpenAI-compatible SSE.
 - TTS phrases синтезируются параллельно, но отправляются в исходном порядке.
 - Frontend использует `AudioBufferSourceNode`, а не замену `<audio>.src`.
-- VRM обновляется через `vrm.update()` и получает аудио для базового lip sync.
+- glTF-аватар обновляется через `AnimationMixer`/процедурный bob и получает аудио для базового lip sync через morph targets.
 - SQLite хранит только явно извлечённые факты с дедупликацией.
+- `VadSession` считает endpointing по score: по умолчанию `pcm_energy`, с `vad_backend = "silero"` — вероятность Silero ONNX (`silero_vad.py`) с децимацией 32 kHz → 16 kHz, кадрами 512 сэмплов и кэшем ONNX-сессии между запросами. Состояние модели живёт в `SileroScorer`, fallback на энергетический порог прозрачен и виден в `VadSession.backend` и `liya doctor`.
+- `LatencyLog` держит окно latency по фазам stt/llm/tts/total, отдаёт p50/p95 в событии `latency_stats` и помечает `regressed`, когда p95 превышает `latency_p95_budget_ms` — это основание откатывать barge-in и preemptive draft, а не включать их вслепую.
 
 ## Transport и capability policy
 

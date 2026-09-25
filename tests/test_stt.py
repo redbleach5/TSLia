@@ -12,6 +12,12 @@ def test_streaming_selection_wraps_backend():
     assert isinstance(select_stt(C()), StreamingSTTBackend)
 
 
+def test_mlx_audio_backend_selection():
+    from liya.stt import MLXAudioSTT, select_stt
+    class C:
+        capabilities = type('Caps', (), {'stt_stream': False})()
+        def transcribe(self, path): return 'mlx'
+    assert isinstance(select_stt(C(), backend='mlx_audio'), MLXAudioSTT)
 def test_macos_backend_falls_back_without_bridge():
     from liya.stt import MacSpeechAnalyzerSTT, LocalHttpSTT
     class C:

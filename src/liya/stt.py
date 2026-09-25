@@ -17,6 +17,15 @@ class LocalHttpSTT(STTBackend):
     def transcribe_with_confidence(self, audio_path): return self.clients.transcribe_with_confidence(audio_path)
     def transcribe_stream(self, audio_path): return self.clients.transcribe_stream(audio_path)
 
+class MLXAudioSTT(LocalHttpSTT):
+    """MLX-Audio через OpenAI-compatible HTTP endpoint.
+
+    Это transport/backend selection, а не встроенный импорт MLX-Audio: модель
+    запускается отдельным локальным MLX-Audio server на Apple Silicon.
+    """
+    def __init__(self, clients) -> None:
+        super().__init__(clients)
+
 class StreamingSTTBackend(STTBackend):
     def __init__(self, backend: STTBackend) -> None:
         self.backend = backend
@@ -45,6 +54,7 @@ class MacSpeechAnalyzerSTT(STTBackend):
 
 def select_stt(clients, streaming: bool | None = None, backend: str = "local_http", bridge=None) -> STTBackend:
     local = LocalHttpSTT(clients)
+    if backend in {"mlx_audio", "mlx-audio"}: return MLXAudioSTT(clients)
     if backend == "macos_speech": return MacSpeechAnalyzerSTT(bridge=bridge, fallback=local)
     enabled = getattr(getattr(clients, "capabilities", None), "stt_stream", False) if streaming is None else streaming
     return StreamingSTTBackend(local) if enabled else local

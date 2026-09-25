@@ -17,5 +17,5 @@ def test_low_confidence_partial_is_not_emitted():
         await runtime.handle(ws,json.dumps({'type':'start_listening','request_id':31}))
         await runtime.handle(ws,json.dumps({'type':'audio_pcm_chunk','request_id':31,'data':base64.b64encode(b'12').decode()}))
         await runtime.partial_tasks[31]
-        assert not any('partial_transcript' in event for event in ws.events)
+        assert not any('interim_transcript' in event for event in ws.events)
     asyncio.run(run())

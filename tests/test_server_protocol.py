@@ -16,5 +16,5 @@ async def _test_audio_protocol_stores_chunks():
     payload=base64.b64encode(b'audio').decode()
     await runtime.handle(ws,json.dumps({'type':'audio_chunk','request_id':7,'data':payload}))
     assert runtime.audio_chunks[7] == [b'audio']
-    assert json.loads(ws.events[-1]) == {'type':'state','state':'listening'}
+    assert json.loads(ws.events[-1]) == {'type':'state','state':'listening','turn_id':None,'generation':0}
 
