@@ -41,7 +41,7 @@ class SentenceBuffer:
 class LiyaRuntime:
     def __init__(self, clients: LocalClients | None) -> None:
         self.clients = clients
-        self.stt = select_stt(clients) if clients is not None else None
+        self.stt = select_stt(clients, backend=getattr(getattr(clients, "settings", None), "stt_backend", "local_http")) if clients is not None else None
         self.memory = MemoryStore("data/memory.sqlite3")
         self.state = "idle"
         self.history: list[dict[str, str]] = []
