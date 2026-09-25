@@ -11,7 +11,7 @@ class Socket:
 class SmokeClients(LocalClients):
     def transcribe_with_confidence(self,path): return 'Привет', 1.0
     def transcribe(self,path): return 'Привет'
-    def transcribe_stream(self,path): return iter(())
+    def transcribe_stream(self,path): raise AssertionError('batch runtime must not call streaming STT')
     def chat(self,messages): return 'Здравствуй'
     def speak(self,text,output_path=None):
         path=Path(output_path or 'out.wav'); path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(b'RIFF'); return path

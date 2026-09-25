@@ -249,7 +249,8 @@ class LiyaRuntime:
         started = time.perf_counter()
         stt_started = started
         try:
-            events = await asyncio.to_thread(lambda: list(self.clients.transcribe_stream(path)))
+            streaming_stt = bool(getattr(self.clients.capabilities, "stt_stream", False))
+            events = await asyncio.to_thread(lambda: list(self.clients.transcribe_stream(path))) if streaming_stt else []
         except LocalServiceError:
             events = []
         stt_ms = int((time.perf_counter() - stt_started) * 1000)
