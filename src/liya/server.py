@@ -16,6 +16,7 @@ except ImportError:
 
 from .clients import LocalClients, LocalServiceError
 from .config import Settings
+from .memory_store import MemoryStore
 
 
 class SentenceBuffer:
@@ -23,7 +24,7 @@ class SentenceBuffer:
         self.buffer = ""
     def add(self, delta: str) -> str | None:
         self.buffer += delta
-        for mark in (".", "!", "?", "вЂ¦", "\n"):
+        for mark in (".", "!", "?", "РІР‚В¦", "\n"):
             index = self.buffer.find(mark)
             if index >= 0 and len(self.buffer[:index].strip()) >= 12:
                 sentence = self.buffer[:index + 1].strip()
@@ -39,6 +40,7 @@ class SentenceBuffer:
 class LiyaRuntime:
     def __init__(self, clients: LocalClients | None) -> None:
         self.clients = clients
+        self.memory = MemoryStore("data/memory.sqlite3")
         self.state = "idle"
         self.history: list[dict[str, str]] = []
         self.audio_chunks: dict[int, list[bytes]] = {}
@@ -102,8 +104,8 @@ class LiyaRuntime:
         reply = ""
         sentence_buffer = SentenceBuffer()
         if not self.clients:
-            await self.send(websocket, {"type": "assistant_text", "text": "Р›РѕРєР°Р»СЊРЅС‹Р№ LLM СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ.", "reply_id": reply_id})
-            return "Р›РѕРєР°Р»СЊРЅС‹Р№ LLM СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ."
+            await self.send(websocket, {"type": "assistant_text", "text": "Р вЂєР С•Р С”Р В°Р В»РЎРЉР Р…РЎвЂ№Р в„– LLM РЎРѓР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р….", "reply_id": reply_id})
+            return "Р вЂєР С•Р С”Р В°Р В»РЎРЉР Р…РЎвЂ№Р в„– LLM РЎРѓР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р…."
         queue: asyncio.Queue[str | None | BaseException] = asyncio.Queue()
         def worker() -> None:
             try:
@@ -176,7 +178,7 @@ class LiyaRuntime:
 
     async def preemptive_reply(self, text: str, request_id: int) -> tuple[str, list[bytes]]:
         if not self.clients: return ""
-        prompt = [{"role": "system", "content": "Ты — Лия. Подготовь краткий черновой ответ, не добавляй выдуманные факты."}, {"role": "user", "content": text}]
+        prompt = [{"role": "system", "content": "РўС‹ вЂ” Р›РёСЏ. РџРѕРґРіРѕС‚РѕРІСЊ РєСЂР°С‚РєРёР№ С‡РµСЂРЅРѕРІРѕР№ РѕС‚РІРµС‚, РЅРµ РґРѕР±Р°РІР»СЏР№ РІС‹РґСѓРјР°РЅРЅС‹Рµ С„Р°РєС‚С‹."}, {"role": "user", "content": text}]
         draft = await asyncio.to_thread(self.clients.chat, prompt)
         settings = self.clients.settings
         if len(text.strip()) < settings.preemptive_min_chars:
@@ -216,7 +218,7 @@ class LiyaRuntime:
                 output.setnchannels(1); output.setsampwidth(2); output.setframerate(32000)
                 output.writeframes(struct.pack(f"<{count}h", *struct.unpack(f"<{count}h", samples)))
         elif not chunks or self.clients is None:
-            await self.send(websocket, {"type": "error", "message": "РђСѓРґРёРѕР·Р°РїСЂРѕСЃ РїСѓСЃС‚ РёР»Рё STT РЅРµРґРѕСЃС‚СѓРїРµРЅ"})
+            await self.send(websocket, {"type": "error", "message": "Р С’РЎС“Р Т‘Р С‘Р С•Р В·Р В°Р С—РЎР‚Р С•РЎРѓ Р С—РЎС“РЎРѓРЎвЂљ Р С‘Р В»Р С‘ STT Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р…"})
             return
         else:
             suffix = ".webm" if event.get("format") == "webm" else ".wav"
@@ -241,6 +243,9 @@ class LiyaRuntime:
         await self.set_state(websocket, "thinking")
         await self.send(websocket, {"type": "transcript", "text": text, "final": True})
         self.history.append({"role": "user", "content": text})
+        self.memory.extract(text)
+        related = self.memory.search(text)
+        memory_context = [{"role": "system", "content": "РР· РґРѕР»РіРѕРІСЂРµРјРµРЅРЅРѕР№ РїР°РјСЏС‚Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ: " + "; ".join(fact.content for fact in related)}] if related else []
         draft_task = self.preemptive_tasks.pop(request_id, None)
         draft = ""
         draft_audio = self.preemptive_audio.pop(request_id, [])
@@ -254,7 +259,7 @@ class LiyaRuntime:
         preemptive_used = False
         tts_started = time.perf_counter()
         try:
-            messages = [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
+            messages = memory_context + [{"role": "system", "content": "РўС‹ вЂ” Р›РёСЏ, Р»РѕРєР°Р»СЊРЅС‹Р№ РіРѕР»РѕСЃРѕРІРѕР№ РєРѕРјРїР°РЅСЊРѕРЅ. РћС‚РІРµС‡Р°Р№ С‚РµРїР»Рѕ, РєСЂР°С‚РєРѕ Рё РµСЃС‚РµСЃС‚РІРµРЅРЅРѕ."}] + self.history[-12:]
             if draft and similarity >= 0.65:
                 reply = draft
                 preemptive_used = True
@@ -266,7 +271,7 @@ class LiyaRuntime:
                 await self.set_state(websocket, "speaking")
                 reply = await self.stream_reply(websocket, messages, self.active_reply)
         except LocalServiceError:
-            reply = "Локальный LLM сейчас недоступен."
+            reply = "Р›РѕРєР°Р»СЊРЅС‹Р№ LLM СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ."
         llm_ms = int((time.perf_counter() - llm_started) * 1000)
         self.history.append({"role": "assistant", "content": reply})
         if self.cancel_event and self.cancel_event.is_set():
@@ -285,7 +290,7 @@ class LiyaRuntime:
         try:
             event = json.loads(raw)
         except json.JSONDecodeError:
-            await self.send(websocket, {"type": "error", "message": "РќРµРєРѕСЂСЂРµРєС‚РЅРѕРµ СЃРѕР±С‹С‚РёРµ"})
+            await self.send(websocket, {"type": "error", "message": "Р СњР ВµР С”Р С•РЎР‚РЎР‚Р ВµР С”РЎвЂљР Р…Р С•Р Вµ РЎРѓР С•Р В±РЎвЂ№РЎвЂљР С‘Р Вµ"})
             return
         kind = event.get("type")
         if kind == "start_listening":
@@ -328,6 +333,11 @@ class LiyaRuntime:
             if self.active_task and not self.active_task.done(): self.active_task.cancel()
             if self.active_reply: await self.send(websocket, {"type": "cancelled", "reply_id": self.active_reply})
             await self.set_state(websocket, "idle")
+        elif kind == "memory_list":
+            await self.send(websocket, {"type": "memory", "facts": [{"id": fact.id, "kind": fact.kind, "content": fact.content, "source": fact.source} for fact in self.memory.list()]})
+        elif kind == "memory_delete":
+            removed = self.memory.delete(int(event.get("id", 0)))
+            await self.send(websocket, {"type": "memory", "deleted": removed})
         elif kind == "ping":
             await self.send(websocket, {"type": "pong"})
 
@@ -340,14 +350,17 @@ class LiyaRuntime:
         await self.set_state(websocket, "thinking")
         await self.send(websocket, {"type": "transcript", "text": text, "final": True})
         self.history.append({"role": "user", "content": text})
+        self.memory.extract(text)
+        related = self.memory.search(text)
+        memory_context = [{"role": "system", "content": "РР· РґРѕР»РіРѕРІСЂРµРјРµРЅРЅРѕР№ РїР°РјСЏС‚Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ: " + "; ".join(fact.content for fact in related)}] if related else []
         try:
             if self.clients is None:
                 raise LocalServiceError("LLM client is not configured")
-            messages = [{"role": "system", "content": "РўС‹ вЂ” Р›РёСЏ, Р»РѕРєР°Р»СЊРЅС‹Р№ РіРѕР»РѕСЃРѕРІРѕР№ РєРѕРјРїР°РЅСЊРѕРЅ. РћС‚РІРµС‡Р°Р№ С‚РµРїР»Рѕ, РєСЂР°С‚РєРѕ Рё РµСЃС‚РµСЃС‚РІРµРЅРЅРѕ."}] + self.history[-12:]
+            messages = memory_context + [{"role": "system", "content": "Ты — Лия, локальный голосовой компаньон. Отвечай тепло, кратко и естественно."}] + self.history[-12:]
             await self.set_state(websocket, "speaking")
             reply = await self.stream_reply(websocket, messages, self.active_reply or "reply")
         except LocalServiceError:
-            reply = "РЇ РїРѕР»СѓС‡РёР»Р° СЃРѕРѕР±С‰РµРЅРёРµ, РЅРѕ Р»РѕРєР°Р»СЊРЅС‹Р№ LLM СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ."
+            reply = "Р Р‡ Р С—Р С•Р В»РЎС“РЎвЂЎР С‘Р В»Р В° РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р Вµ, Р Р…Р С• Р В»Р С•Р С”Р В°Р В»РЎРЉР Р…РЎвЂ№Р в„– LLM РЎРѓР ВµР в„–РЎвЂЎР В°РЎРѓ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р…."
         self.history.append({"role": "assistant", "content": reply})
 
 

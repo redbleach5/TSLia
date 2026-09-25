@@ -23,4 +23,6 @@ def test_process_audio_reaches_llm():
         await runtime.process_audio(ws,event)
         assert any(json.loads(item).get('type')=='transcript' for item in ws.events)
         assert any(json.loads(item).get('type')=='assistant_text' for item in ws.events)
+        metrics=[json.loads(item) for item in ws.events if json.loads(item).get('type')=='pipeline_metrics'][0]
+        assert metrics['stt_ms'] >= 0 and metrics['llm_ms'] >= 0 and metrics['total_ms'] >= 0
     asyncio.run(run())
