@@ -1,1 +1,9 @@
-{"$schema":"https://schema.tauri.app/config/2","productName":"Лия","version":"0.1.0","identifier":"dev.tslia.liya","build":{"beforeDevCommand":"npm run dev","devUrl":"http://localhost:1420","beforeBuildCommand":"npm run build","frontendDist":"../dist"},"app":{"windows":[{"title":"Лия","width":1100,"height":800,"minWidth":760,"minHeight":600,"resizable":true,"decorations":true}],"security":{"csp":null}},"bundle":{"active":true,"targets":"all","icon":[]}}
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Лия",
+  "version": "0.1.0",
+  "identifier": "dev.tslia.liya",
+  "build": {"beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist"},
+  "app": {"windows": [{"title": "Лия", "width": 1100, "height": 800, "minWidth": 760, "minHeight": 600, "resizable": true, "decorations": true}], "security": {"csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:8765 http://127.0.0.1:8080 http://127.0.0.1:8081 http://127.0.0.1:8082; media-src 'self' blob: data:; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'"}},
+  "bundle": {"active": true, "targets": "all", "icon": []}
+}
