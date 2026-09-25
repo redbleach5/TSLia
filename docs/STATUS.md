@@ -1,7 +1,7 @@
 
 # Статус проекта
 
-Версия документации соответствует commit `7a12b61` и текущему состоянию репозитория.
+Версия документации соответствует текущему состоянию репозитория. Проверяемые команды: `pytest -q`, `npm run build` и `cargo check`.
 
 ## Подтверждено
 
@@ -13,7 +13,7 @@
 - Capability policy: локальный STT по умолчанию не объявляется streaming.
 - Turn lifecycle: `turn_id`, `reply_id`, generation guard и единая отмена.
 - Базовый SQLite facts memory с просмотром и удалением.
-- 84 Python tests, React/Vite build и Tauri `cargo check` проходят.
+- Python, React/Vite и Tauri проверки проходят; фиксированное число тестов не используется как критерий готовности.
 - Server-side endpointing по PCM (`VadSession`) и выбор VAD-backend: `vad_backend = "silero"` поднимает Silero ONNX (`silero_vad.py`), при отсутствии модели/`onnxruntime` или сбое инференса сессия прозрачно остаётся на энергетическом пороге.
 - Скользящие latency-метрики p50/p95 по фазам stt/llm/tts/total (`latency.py`), событие `latency_stats` и бюджет `latency_p95_budget_ms` для отката рискованных оптимизаций.
 - Выбор бэкенда мимики `face_backend`, health-probe Audio2Face-3D NIM и отчёт в `liya doctor`.

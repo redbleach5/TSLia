@@ -30,8 +30,8 @@ type Morphs=Map<string,Slot[]>
 // Снимок базовой (T-поза/покой) трансформации кости: каждый кадр пишем base+offset.
 type Handle={obj:THREE.Object3D;rx:number;ry:number;rz:number;px:number;py:number;pz:number}
 
-// Алиасы morph targets: применяется первая группа с найденным morph. VRoid-имена
-// вычислены из blendShapeGroups исходного Lia_v2.vrm (см. историю файла).
+// Алиасы morph targets: применяется первая группа с найденным morph. Имена VRoid-морфов
+// сохранены как совместимые с историческим glTF-аватаром Лии.
 const ALIASES:Record<string,ReadonlyArray<ReadonlyArray<string>>>={
   happy:[['happy'],['joy'],['smile'],['Fcl_ALL_Joy']],
   relaxed:[['relaxed'],['relief'],['calm'],['Fcl_ALL_Fun']],

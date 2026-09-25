@@ -113,6 +113,17 @@ UI использует PCM через `AudioWorklet`; WebM оставлен т�
 
 WSL используется для llama.cpp/GGUF, тестов и переносимости. MLX недоступен внутри WSL. Подробности: [docs/WSL.md](docs/WSL.md).
 
+## Проверки разработки
+
+Для локального запуска Python-тестов и линтера:
+
+```bash
+python -m pip install -e '.[dev]'
+python -m ruff check src tests
+python -m pytest -q
+```
+
+Ruff не входит в runtime-зависимости приложения; его отсутствие в системном Python не влияет на запуск Лии.
 ## Команды
 
 ```bash

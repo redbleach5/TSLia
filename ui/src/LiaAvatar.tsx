@@ -45,8 +45,10 @@ export function LiaAvatar({state,analyser,faceFrame}:Props){
   useEffect(()=>{
     if(!host.current)return
     let dead=false,frame=0
+    let fitObserver:ResizeObserver|null=null
     let mixer:THREE.AnimationMixer|null=null
     let rig:AvatarRig|null=null
+    let modelWidth=FRAME_HEIGHT,modelHeight=FRAME_HEIGHT
     const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(30,1,.1,100),renderer=new THREE.WebGLRenderer({alpha:true,antialias:true})
     // Кадр в полный рост под сцену (stage высотой 470, canvas 405): голова у верха canvas,
     // ноги — чуть выше подписи stage-caption (top:382px).
@@ -68,7 +70,17 @@ export function LiaAvatar({state,analyser,faceFrame}:Props){
     const wrapper=new THREE.Group()
     scene.add(wrapper)
 
-    const resize=()=>{if(!host.current)return;const {clientWidth:w,clientHeight:h}=host.current;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h)}
+    const resize=()=>{
+      if(!host.current)return
+      const {clientWidth:w,clientHeight:h}=host.current
+      if(w<1||h<1)return
+      camera.aspect=w/h
+      camera.updateProjectionMatrix()
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2))
+      renderer.setSize(w,h,false)
+      // Камера смотрит в центр безопасной области между подписью и верхом stage.
+      camera.lookAt(0,.88,0)
+    }
     resize()
     const ro=new ResizeObserver(resize)
     ro.observe(host.current)
@@ -82,6 +94,8 @@ export function LiaAvatar({state,analyser,faceFrame}:Props){
           const box=new THREE.Box3().setFromObject(g.scene)
           const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3())
           const scale=size.y>0?FRAME_HEIGHT/size.y:1
+          modelWidth=Math.max(1,size.x*scale)
+          modelHeight=Math.max(1,size.y*scale)
           g.scene.scale.setScalar(scale)
           g.scene.position.set(-center.x*scale,FRAME_Y-box.min.y*scale,-center.z*scale)
           if(g.animations.length){
@@ -106,11 +120,21 @@ export function LiaAvatar({state,analyser,faceFrame}:Props){
       // и дальше двигает их только относительно базы (см. avatarRig.ts).
       rig=new AvatarRig(root,wrapper,MODEL_ROTATION_Y)
       wrapper.add(root)
-      // Честный отчёт о мимике: сколько ARKit-шейпов эта модель принимает.
-      // Модель VRoid (57 морфов Fcl_*) принимает не все 52 — см. ui/src/faceMap.ts.
-      const cover=rig.coverage()
-      console.info(`[мимика] ARKit: ${cover.mapped.length}/${cover.shapes} шейпов принимается, ${cover.lost.length} нет морфов`
-        + (cover.missingTargets.length?`; в модели отсутствуют: ${cover.missingTargets.join(', ')}`:''))
+    // Вписываем bounds в кадр с запасом 12%. На широком окне ограничивает
+      // высота, на узком — ширина рук/плеч; дистанция пересчитывается resize.
+      const fitCamera=()=>{
+        const vfov=THREE.MathUtils.degToRad(camera.fov),tan=Math.tan(vfov/2)
+        const horizontal=(modelWidth*.62)/(tan*Math.max(.35,camera.aspect))
+        const vertical=(modelHeight*.62)/tan
+        camera.position.z=Math.max(3.2,horizontal,vertical)
+        camera.updateProjectionMatrix()
+      }
+      fitCamera()
+      // ResizeObserver после загрузки bounds гарантирует правильный fit
+      // при первом появлении canvas и при изменении размера окна.
+      const fitObserverInstance=new ResizeObserver(fitCamera)
+      fitObserver=fitObserverInstance
+      if(host.current)fitObserverInstance.observe(host.current)
       setReady(true)
     }).catch(()=>{if(!dead)setError(true)})
 
@@ -152,6 +176,7 @@ export function LiaAvatar({state,analyser,faceFrame}:Props){
       dead=true
       cancelAnimationFrame(frame)
       ro.disconnect()
+      fitObserver?.disconnect()
       mixer?.stopAllAction()
       rig=null
       scene.clear()

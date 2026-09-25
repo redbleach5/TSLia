@@ -6,7 +6,7 @@
 
 - [x] Python CLI и локальный HTTP-контур LLM/STT/TTS.
 - [x] WebSocket runtime и Tauri desktop UI.
-- [x] `Lia_v2.vrm` через Three.js и `@pixiv/three-vrm`.
+- [x] glTF-аватар через Three.js; процедурный риг и Web Audio queue.
 - [x] PCM capture через `AudioWorklet`, mono PCM16, 32 kHz.
 - [x] Web Audio playback queue и базовый lip sync.
 - [x] SSE streaming LLM и sentence buffer.
@@ -15,7 +15,7 @@
 - [x] Capability policy и выбор batch/streaming STT.
 - [x] Контракт `MacSpeechAnalyzerSTT` с fallback на `LocalHttpSTT`.
 - [x] SQLite facts memory с просмотром и удалением.
-- [x] 81 Python tests, React/Vite build, Tauri `cargo check`.
+- [x] Python, React/Vite и Tauri проверки проходят; фиксированное число тестов не используется как критерий готовности.
 
 ## Этап A — честный voice runtime
 
@@ -86,7 +86,7 @@
 - [ ] First-token, first-audio, total latency benchmarks на реальном железе (сейчас собираются только p50/p95 по фазам).
 - [ ] Memory/CPU/GPU profiles для 8B/14B/32B.
 - [ ] Piper против Kokoro/MLX-Audio на русском.
-- [x] VRM expression capability detection — отчёт покрытия ARKit-52 → морфы модели (`faceMap.faceCoverage`, `scripts/model_capabilities.py`).
+- [x] Expression capability detection — отчёт покрытия ARKit-52 → морфы модели (`faceMap.faceCoverage`, `scripts/model_capabilities.py`).
 - [ ] CSP, Tauri capabilities, WebSocket session token и origin checks.
 - [ ] macOS notarization/signing и automated release.
 

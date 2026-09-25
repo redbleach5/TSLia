@@ -7,6 +7,7 @@ dependencies = []
 
 [project.optional-dependencies]
 ui = ['websockets>=12']
+dev = ['ruff>=0.9']
 
 [project.scripts]
 liya = 'liya.cli:main'
@@ -18,3 +19,11 @@ build-backend = 'setuptools.build_meta'
 [tool.pytest.ini_options]
 pythonpath = ['src']
 testpaths = ['tests']
+
+[tool.ruff]
+line-length = 120
+target-version = 'py311'
+src = ['src', 'tests']
+
+[tool.ruff.lint]
+select = ['E', 'F', 'I']

@@ -6,7 +6,7 @@ ARKit-52: возможность управлять выражением под�
 
 Запуск:
     python scripts/model_capabilities.py ui/public/models/Lia.gltf
-    python scripts/model_capabilities.py Lia_v2.vrm
+    # Устаревший VRM-файл больше не нужен: текущий runtime использует glTF.
 """
 from __future__ import annotations
 
