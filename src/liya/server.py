@@ -16,6 +16,7 @@ except ImportError:
 
 from .clients import LocalClients, LocalServiceError
 from .config import Settings
+from .stt import LocalHttpSTT, StreamingSTTBackend, select_stt
 from .memory_store import MemoryStore
 
 
@@ -40,6 +41,7 @@ class SentenceBuffer:
 class LiyaRuntime:
     def __init__(self, clients: LocalClients | None) -> None:
         self.clients = clients
+        self.stt = select_stt(clients) if clients is not None else None
         self.memory = MemoryStore("data/memory.sqlite3")
         self.state = "idle"
         self.history: list[dict[str, str]] = []
@@ -185,7 +187,7 @@ class LiyaRuntime:
             with wave.open(str(path), "wb") as output:
                 output.setnchannels(1); output.setsampwidth(2); output.setframerate(32000)
                 output.writeframes(struct.pack(f"<{count}h", *struct.unpack(f"<{count}h", samples)))
-            text, confidence = await asyncio.to_thread(self.clients.transcribe_with_confidence, path)
+            text, confidence = await asyncio.to_thread(self.stt.transcribe_with_confidence, path)
             threshold = settings.stt_partial_min_confidence if settings else 0.35
             if text.strip() and confidence >= threshold and self.partial_versions.get(request_id) == version:
                 self.preemptive_texts.setdefault(request_id, []).append(text.strip())
@@ -250,7 +252,7 @@ class LiyaRuntime:
         stt_started = started
         try:
             streaming_stt = bool(getattr(self.clients.capabilities, "stt_stream", False))
-            events = await asyncio.to_thread(lambda: list(self.clients.transcribe_stream(path))) if streaming_stt else []
+            events = await asyncio.to_thread(lambda: list(self.stt.transcribe_stream(path))) if streaming_stt else []
         except LocalServiceError:
             events = []
         stt_ms = int((time.perf_counter() - stt_started) * 1000)
@@ -259,7 +261,7 @@ class LiyaRuntime:
                 await self.send(websocket, {"type": "partial_transcript", "text": item["text"], "request_id": request_id, "final": item["final"]})
             text = str(events[-1]["text"])
         else:
-            text = await asyncio.to_thread(self.clients.transcribe, path)
+            text = await asyncio.to_thread(self.stt.transcribe, path)
         llm_started = time.perf_counter()
         await self.set_state(websocket, "thinking")
         await self.send(websocket, {"type": "transcript", "text": text, "final": True})
