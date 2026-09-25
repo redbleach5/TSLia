@@ -2,7 +2,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from liya.clients import LocalClients
+from liya.clients import LocalClients, ServiceCapabilities
 from liya.config import Settings
 
 
@@ -24,3 +24,8 @@ def test_chat_stream_parses_sse():
     settings = Settings(f"http://127.0.0.1:{server.server_port}", "s", "t", "m", "ru", "v", 2, "out.wav")
     assert list(LocalClients(settings).chat_stream([])) == ["Привет", " от Лии"]
     server.shutdown()
+
+
+def test_capabilities_default_to_honest_modes():
+    settings = Settings('l', 's', 't', 'm', 'ru', 'v', 2, 'out.wav')
+    assert LocalClients(settings).capabilities == ServiceCapabilities(llm_stream=True, stt_stream=False, tts_stream=False)

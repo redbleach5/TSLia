@@ -1,4 +1,4 @@
-{
+﻿{
     "llm_url":  "http://127.0.0.1:8080/v1/chat/completions",
     "stt_url":  "http://127.0.0.1:8081/v1/audio/transcriptions",
     "tts_url":  "http://127.0.0.1:8082/v1/audio/speech",
@@ -15,5 +15,6 @@
     "stt_partial_min_bytes":  32000,
     "stt_partial_window_seconds":  8,
     "stt_partial_max_calls":  6,
-    "stt_partial_min_confidence":  0.35
+    "stt_partial_min_confidence":  0.35,
+    "request_timeout_seconds":  30
 }

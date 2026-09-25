@@ -5,19 +5,31 @@ import urllib.error
 import urllib.request
 import tempfile
 from pathlib import Path
-from typing import Any, Iterator
+from dataclasses import dataclass
+from typing import Iterator
 from .config import Settings
+
+@dataclass(frozen=True)
+class ServiceCapabilities:
+    llm_stream: bool = True
+    stt_stream: bool = False
+    tts_stream: bool = False
 
 class LocalServiceError(RuntimeError): pass
 
 class LocalClients:
-    def __init__(self, settings: Settings) -> None: self.settings = settings
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.capabilities = ServiceCapabilities()
+
+    def _timeout(self) -> float:
+        return float(getattr(self.settings, "request_timeout_seconds", 30.0))
 
     def chat(self, messages: list[dict[str, str]]) -> str:
         payload = {"model": self.settings.model, "messages": messages, "temperature": 0.7, "stream": False}
         request = urllib.request.Request(self.settings.llm_url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=120) as response: data = json.loads(response.read())
+            with urllib.request.urlopen(request, timeout=self._timeout()) as response: data = json.loads(response.read())
             return data["choices"][0]["message"]["content"].strip()
         except (urllib.error.URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError) as exc: raise LocalServiceError(f"LLM недоступен: {self.settings.llm_url}") from exc
 
@@ -25,7 +37,7 @@ class LocalClients:
         payload = {"model": self.settings.model, "messages": messages, "temperature": 0.7, "stream": True}
         request = urllib.request.Request(self.settings.llm_url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Accept": "text/event-stream"})
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(request, timeout=self._timeout()) as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8").strip()
                     if not line.startswith("data:"): continue
@@ -43,7 +55,7 @@ class LocalClients:
         body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\nContent-Type: {content_type}\r\n\r\n").encode() + audio + f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n{self.settings.language}\r\n--{boundary}--\r\n".encode()
         request = urllib.request.Request(self.settings.stt_url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
         try:
-            with urllib.request.urlopen(request, timeout=120) as response: return json.loads(response.read())["text"].strip()
+            with urllib.request.urlopen(request, timeout=self._timeout()) as response: return json.loads(response.read())["text"].strip()
         except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError) as exc: raise LocalServiceError(f"STT недоступен: {self.settings.stt_url}") from exc
 
     def transcribe_with_confidence(self, audio_path: str | Path) -> tuple[str, float]:
@@ -52,7 +64,7 @@ class LocalClients:
         body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\nContent-Type: {content_type}\r\n\r\n").encode() + audio + f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n{self.settings.language}\r\n--{boundary}--\r\n".encode()
         request = urllib.request.Request(self.settings.stt_url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
         try:
-            with urllib.request.urlopen(request, timeout=120) as response: data = json.loads(response.read())
+            with urllib.request.urlopen(request, timeout=self._timeout()) as response: data = json.loads(response.read())
             text = str(data.get("text", "")).strip(); confidence = data.get("confidence", data.get("average_logprob", 1.0))
             return text, float(confidence)
         except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError) as exc: raise LocalServiceError(f"STT недоступен: {self.settings.stt_url}") from exc
@@ -63,7 +75,7 @@ class LocalClients:
         body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\nContent-Type: {content_type}\r\n\r\n").encode() + audio + f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n{self.settings.language}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"stream\"\r\n\r\ntrue\r\n--{boundary}--\r\n".encode()
         request = urllib.request.Request(self.settings.stt_url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "text/event-stream"})
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(request, timeout=self._timeout()) as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8").strip()
                     if not line.startswith("data:"): continue
@@ -79,7 +91,7 @@ class LocalClients:
         payload = {"model": self.settings.voice, "input": text, "voice": self.settings.voice}
         request = urllib.request.Request(self.settings.tts_url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=120) as response: path.write_bytes(response.read())
+            with urllib.request.urlopen(request, timeout=self._timeout()) as response: path.write_bytes(response.read())
         except (urllib.error.URLError, TimeoutError) as exc: raise LocalServiceError(f"TTS недоступен: {self.settings.tts_url}") from exc
         return path
 
@@ -87,7 +99,7 @@ class LocalClients:
         payload = {"model": self.settings.voice, "input": text, "voice": self.settings.voice, "stream": True}
         request = urllib.request.Request(self.settings.tts_url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Accept": "audio/wav"})
         try:
-            with urllib.request.urlopen(request, timeout=120) as response: yield from iter(lambda: response.read(8192), b"")
+            with urllib.request.urlopen(request, timeout=self._timeout()) as response: yield from iter(lambda: response.read(8192), b"")
         except (urllib.error.URLError, TimeoutError) as exc:
             raise LocalServiceError(f"TTS stream недоступен: {self.settings.tts_url}") from exc
 
